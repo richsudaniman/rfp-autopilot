@@ -2,6 +2,8 @@
 
 **Draft answers to security questionnaires and RFPs from your library of approved answers — and flag what a human needs to answer instead of making it up.**
 
+![Sample output: questionnaire with drafted answers, confidence scores, source IDs and color-coded review status](docs/sample-output.png)
+
 ## The problem
 
 Companies that sell to enterprises get long security questionnaires and RFPs — often 100–300 questions in a spreadsheet:
@@ -12,14 +14,7 @@ Most of these have been answered before, but the answers live in old questionnai
 
 ## What this does
 
-Upload the spreadsheet → get back the same spreadsheet with a drafted answer, a confidence level and the source IDs for every question. Reviewers only look at what's flagged.
-
-| # | Question | Draft Answer | Confidence | Source | Status |
-|---|---|---|---|---|---|
-| 2.1 | Does your platform support SSO via SAML 2.0 with Okta? | Yes. We support SAML 2.0 SSO with any compliant identity provider, including Okta… | High (0.84) | IAM-001 | 🟩 Drafted |
-| 3.1 | Please provide your most recent SOC 2 Type 2 report. | Yes. We complete an annual SOC 2 Type II audit… available under NDA. | Medium (0.54) | CMP-001 | 🟨 Drafted – quick review |
-| 3.4 | Are you FedRAMP authorized? | — | Low (0.24) | — | 🟥 Needs SME review |
-| 7.2 | Do you use customer data to train AI models? | — | Low (0.41) | — | 🟥 Needs SME review |
+Upload the spreadsheet → get back the same spreadsheet with a drafted answer, a confidence level and the source IDs for every question. Reviewers only look at what's flagged (see the screenshot above).
 
 On the included 21-question sample: **11 drafted, 7 quick reviews, 3 flagged** — and the 3 flagged are exactly the ones the library has no approved answer for.
 
