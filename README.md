@@ -2,8 +2,6 @@
 
 **Draft answers to security questionnaires and RFPs from your library of approved answers — and flag what a human needs to answer instead of making it up.**
 
-![tests](https://github.com/richsudaniman/rfp-autopilot/actions/workflows/tests.yml/badge.svg)
-
 ## The problem
 
 Companies that sell to enterprises get long security questionnaires and RFPs — often 100–300 questions in a spreadsheet:
