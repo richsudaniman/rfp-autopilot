@@ -1,68 +1,49 @@
-# RFP Autopilot
+# rfp-autopilot
 
-**Draft answers to security questionnaires and RFPs from your library of approved answers — and flag what a human needs to answer instead of making it up.**
+Takes a security questionnaire / RFP spreadsheet and drafts answers from a library of answers that have already been approved. If it can't find a good match it leaves the answer blank and flags it for a human instead of guessing.
 
-![Sample output: questionnaire with drafted answers, confidence scores, source IDs and color-coded review status](docs/sample-output.png)
+![output](docs/sample-output.png)
+*(the sample questionnaire after a run - green = drafted, yellow = drafted but worth a look, red = needs a human)*
 
-## The problem
+## why
 
-Companies that sell to enterprises get long security questionnaires and RFPs — often 100–300 questions in a spreadsheet:
+If you sell software to bigger companies you get these questionnaires constantly - 100 to 300 rows of "do you encrypt data at rest", "do you support SAML SSO", "what's your RTO/RPO". Almost all of it has been answered before, it's just scattered across old questionnaires, the SOC 2 report, policy docs, etc. so someone ends up copy-pasting for hours.
 
-> *"Do you encrypt data at rest?" · "Do you support SAML SSO?" · "What are your RTO and RPO?"*
+The part I cared most about was **not making stuff up**. A wrong "yes" on a security questionnaire can end up in a contract. So there are two places where it bails out to a human:
 
-Most of these have been answered before, but the answers live in old questionnaires, whitepapers and policy docs. Solutions Engineers and security teams end up rewriting them by hand, every deal.
+1. before the LLM is even called - if the closest approved answer isn't similar enough (score below `--min-match`), the row is marked "Needs SME review" and nothing gets drafted
+2. inside the prompt - the model is told to only use the approved answers it's given and to reply `INSUFFICIENT_CONTEXT` if they don't actually answer the question. that also routes to a human
 
-## What this does
+Every drafted answer also gets the source IDs it came from, so whoever reviews it can check the original wording quickly.
 
-Upload the spreadsheet → get back the same spreadsheet with a drafted answer, a confidence level and the source IDs for every question. Reviewers only look at what's flagged (see the screenshot above).
+## how it works
 
-On the included 21-question sample: **11 drafted, 7 quick reviews, 3 flagged** — and the 3 flagged are exactly the ones the library has no approved answer for.
-
-## How it works
-
-Retrieval + grounded generation, with a guardrail in the middle:
-
-```mermaid
-flowchart LR
-    A[questionnaire.xlsx] --> B[For each question:<br/>find top 3 similar<br/>approved answers]
-    L[(Approved answer<br/>library .csv)] --> B
-    B --> C{Best match<br/>≥ threshold?}
-    C -- no --> F[🟥 Needs SME review<br/>no answer drafted]
-    C -- yes --> D[LLM drafts answer using<br/>ONLY those approved answers]
-    D -- "INSUFFICIENT_CONTEXT" --> F
-    D --> E[🟩/🟨 Draft + confidence<br/>+ source IDs]
-    E --> O[answered.xlsx]
-    F --> O
+```
+questionnaire.xlsx
+  -> for each question, find the 3 closest approved answers (TF-IDF)
+  -> best score too low?  -> "Needs SME review", no answer
+  -> otherwise Claude drafts an answer using only those 3
+  -> answer / confidence / score / source IDs / status written back into the sheet
 ```
 
-1. **Library** — `data/answer_library.csv`: each approved answer has an ID, the canonical question, optional alternate phrasings (`aliases`, pipe-separated), the answer and where it was approved (SOC 2 report, DPA, admin guide…).
-2. **Retrieve** — TF-IDF over word n-grams *and* character n-grams, plus a small security-acronym expander (`SSO ↔ single sign-on`, `2FA ↔ MFA`, `RTO`, `PHI`…). Each library entry is scored by its best-matching phrasing. No vector DB or API key needed.
-3. **Guardrail** — if the best match is below `--min-match` (default 0.48), the question is **flagged for an SME and no answer is generated**.
-4. **Draft** — otherwise Claude writes the answer with a strict system prompt: use only facts in the approved answers, or reply `INSUFFICIENT_CONTEXT` (which also routes to an SME). Temperature 0.
-5. **Write back** — answer, confidence (High / Medium / Low), match score, source IDs and status are added as color-coded columns in the original sheet. Re-running reuses those columns.
+- **retrieval** is TF-IDF on word n-grams + character n-grams, plus a small list of security acronyms that get expanded (SSO -> single sign-on, 2FA -> MFA, RTO, PHI...). I went with TF-IDF over embeddings because it's easy to debug, needs no API key, and is fine for a library of a few thousand answers. Swapping it later only touches `retriever.py`.
+- **aliases**: each library entry can have alternate phrasings (pipe-separated) since buyers word the same question 10 different ways. When someone answers a flagged question you add it to the library (or add the new wording as an alias) and next time it drafts automatically.
+- **no API key?** it runs in "offline" mode and just reuses the best-matching approved answer word for word. tests + CI use this mode.
 
-### Design decisions
-
-- **Refusing beats guessing.** A wrong "Yes" on a security questionnaire can become a contractual commitment. The tool has two independent ways to say "a human should answer this": a retrieval-score threshold *before* the LLM is called, and the LLM's own `INSUFFICIENT_CONTEXT` escape hatch *after*.
-- **Every answer is traceable.** Source IDs go in the spreadsheet so a reviewer can check the approved wording in seconds.
-- **Works offline.** Without `ANTHROPIC_API_KEY` it runs in extractive mode (reuses the best approved answer verbatim). Tests and CI use this mode, and the LLM is mocked in unit tests.
-- **The library gets smarter over time.** When an SME answers a flagged question, add it (or add the new phrasing as an alias) and the next questionnaire auto-drafts it.
-- **Simple retrieval on purpose.** TF-IDF is transparent, fast and good enough for a few thousand answers; `Retriever` is one small class, so swapping in embeddings later is a contained change.
-
-## Quick start
+## running it
 
 ```bash
-git clone https://github.com/richsudaniman/rfp-autopilot.git
-cd rfp-autopilot
 pip install -r requirements.txt
 
-# Offline mode (no API key needed)
+# offline, no API key
 python -m rfp_autopilot examples/sample_questionnaire.xlsx --offline
 
-# LLM mode
-export ANTHROPIC_API_KEY=sk-ant-...
+# with Claude
+export ANTHROPIC_API_KEY=...
 python -m rfp_autopilot path/to/questionnaire.xlsx --library data/answer_library.csv
 ```
+
+Output on the sample (21 questions):
 
 ```
 Library: 25 approved answers | Drafter: ExtractiveDrafter
@@ -72,44 +53,31 @@ Flagged for SME review:
   row 13: Are you FedRAMP authorized?
   row 18: Do you run a public bug bounty program?
   row 22: Do you use customer data to train AI or machine learning models?
-
-Saved -> examples/sample_questionnaire_answered.xlsx
 ```
 
-Options: `--sheet`, `--header-row`, `--min-match`, `--high`, `-o/--output`, `--offline`, `--llm`. Model is set with `ANTHROPIC_MODEL` (default `claude-sonnet-4-5`).
+Those 3 are the ones the library actually has nothing for, which is what I wanted to see.
 
-### As a GitHub automation
+Other flags: `--sheet`, `--header-row`, `--min-match`, `--high`, `-o`. The questionnaire just needs a column with "question" somewhere in the header. Model defaults to `claude-sonnet-4-5`, override with `ANTHROPIC_MODEL`.
 
-Push a questionnaire into [`inbox/`](inbox/) and the **Answer questionnaires** workflow drafts it and attaches `<name>_answered.xlsx` to the run. Add an `ANTHROPIC_API_KEY` repository secret to enable LLM drafting.
+There's also a GitHub Action - drop an .xlsx into `inbox/`, push, and it attaches the answered file to the workflow run. Add `ANTHROPIC_API_KEY` as a repo secret if you want LLM drafting there.
 
-## Project layout
+## known issues / stuff I'd fix next
+
+- thresholds (0.48 to draft, 0.65 for "High") were tuned on the sample questionnaire only. a couple of rows sit right on the edge (uptime is 0.50, bug bounty is 0.47) so they'll need re-tuning on a real library
+- in offline mode the answers can read a bit off - e.g. "What TLS version do you use?" gets back "Yes. All data in transit is encrypted using TLS 1.2 or higher..." because it's just reusing the approved text. LLM mode rewrites it properly
+- TF-IDF still misses some paraphrases with no shared words. that's what the aliases are for for now, but embeddings would help
+- xlsx only, one sheet at a time
+- would like a small review UI where you approve/edit the drafts and they get saved back into the library
+
+## layout
 
 ```
-rfp_autopilot/
-  library.py    load + validate the approved-answer CSV
-  retriever.py  TF-IDF (word + char n-grams) similarity search
-  drafter.py    LLMDrafter (Claude, grounded) / ExtractiveDrafter (offline)
-  pipeline.py   thresholds, guardrail, spreadsheet read/write
-  cli.py        command-line interface
-data/answer_library.csv          sample library (fictional company)
-examples/sample_questionnaire.xlsx  + _answered.xlsx output
-tests/                           pytest suite (LLM mocked)
-.github/workflows/                tests + inbox automation
+rfp_autopilot/   library.py, retriever.py, drafter.py, pipeline.py, cli.py
+data/            answer_library.csv (made-up company)
+examples/        sample questionnaire + the answered output
+tests/           pytest, LLM is mocked
 ```
 
-## Tests
+`python -m pytest -q` to run the tests.
 
-```bash
-pip install pytest
-python -m pytest -q
-```
-
-## Next steps
-
-- Embedding-based retrieval for larger libraries
-- Small web UI for upload → review → approve, writing approved answers back to the library
-- Answer freshness: flag library entries whose source document is older than N months
-
----
-
-*The answer library describes a fictional SaaS company and is for demonstration only.*
+The answer library is for a fictional SaaS company, it's just there for the demo.
